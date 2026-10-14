@@ -15,11 +15,51 @@ import 'package:pinenacl/ed25519.dart' as ed25519;
 typedef SshKeyPairParser =
     List<SSHKeyPair> Function(String pemText, String? passphrase);
 
+/// Looks up a saved host by id, for resolving [SavedHost.jumpHostId].
+typedef JumpHostResolver = SavedHost? Function(String id);
+
+typedef SshSocketConnector =
+    Future<SSHSocket> Function(String host, int port, {Duration? timeout});
+
+typedef SshClientBuilder =
+    SSHClient Function(
+      SSHSocket socket, {
+      required String username,
+      required List<SSHKeyPair>? identities,
+      required SSHAgentHandler? agentHandler,
+      required SSHPasswordRequestHandler? onPasswordRequest,
+      required SSHUserInfoRequestHandler? onUserInfoRequest,
+      required SSHHostkeyVerifyHandler onVerifyHostKey,
+    });
+
+SSHClient _defaultClientBuilder(
+  SSHSocket socket, {
+  required String username,
+  required List<SSHKeyPair>? identities,
+  required SSHAgentHandler? agentHandler,
+  required SSHPasswordRequestHandler? onPasswordRequest,
+  required SSHUserInfoRequestHandler? onUserInfoRequest,
+  required SSHHostkeyVerifyHandler onVerifyHostKey,
+}) {
+  return SSHClient(
+    socket,
+    username: username,
+    identities: identities,
+    agentHandler: agentHandler,
+    onPasswordRequest: onPasswordRequest,
+    onUserInfoRequest: onUserInfoRequest,
+    onVerifyHostKey: onVerifyHostKey,
+  );
+}
+
 class SshClientFactory {
   SshClientFactory(
     this._hostKeyVerifier, {
     OpenSshSecurityKeySigner? securityKeySigner,
     SshKeyPairParser? keyPairParser,
+    JumpHostResolver? jumpHostResolver,
+    SshSocketConnector? socketConnector,
+    SshClientBuilder? clientBuilder,
   }) : _securityKeySigner =
            securityKeySigner ??
            OpenSshSecurityKeySigner(
@@ -29,42 +69,92 @@ class SshClientFactory {
              onPinRequest: SecurityKeyInteraction.instance.requestPin,
              onKeySelect: SecurityKeyInteraction.instance.requestKeySelection,
            ),
-       _keyPairParser = keyPairParser ?? SSHKeyPair.fromPem;
+       _keyPairParser = keyPairParser ?? SSHKeyPair.fromPem,
+       _jumpResolver = jumpHostResolver,
+       _socketConnector = socketConnector ?? TcpSshSocket.connect,
+       _clientBuilder = clientBuilder ?? _defaultClientBuilder;
 
   final HostKeyVerifier _hostKeyVerifier;
   final OpenSshSecurityKeySigner _securityKeySigner;
   final SshKeyPairParser _keyPairParser;
+  final JumpHostResolver? _jumpResolver;
+  final SshSocketConnector _socketConnector;
+  final SshClientBuilder _clientBuilder;
   SSHKeyPair? _externalAuthIdentity;
 
+  /// Opens an SSH client for [host]. When the host names a jump host, the
+  /// client runs over a `forwardLocal` channel of a client for the jump host,
+  /// and closing the returned client also closes the jump client.
   Future<SSHClient> connect(SavedHost host) async {
+    final jumpId = host.jumpHostId;
+    if (jumpId == null) {
+      return _connectDirect(host);
+    }
+    final jump = _jumpResolver?.call(jumpId);
+    if (jump == null) {
+      throw AppFailure('The jump host for "${host.name}" no longer exists.');
+    }
+    if (jump.isLocal || jump.jumpHostId != null) {
+      throw AppFailure(
+        'Jump host "${jump.name}" cannot be used: only one hop is supported.',
+      );
+    }
+    return _connectViaJump(host, jump);
+  }
+
+  Future<SSHClient> _connectDirect(SavedHost host) async {
     SSHSocket? socket;
     try {
-      socket = await TcpSshSocket.connect(
+      socket = await _socketConnector(
         host.host.trim(),
         host.port,
         timeout: Duration(seconds: host.connectionTimeoutSeconds),
       );
-      final identities = _identitiesFor(host);
-      return SSHClient(
-        socket,
-        username: host.username.trim(),
-        identities: identities,
-        agentHandler: _agentHandlerFor(host, identities),
-        onPasswordRequest: _passwordRequestFor(host),
-        onUserInfoRequest: _userInfoRequestFor(host),
-        onVerifyHostKey: (type, fingerprint) {
-          return _hostKeyVerifier.verify(
-            host: host.host.trim(),
-            port: host.port,
-            type: type,
-            fingerprint: _formatFingerprint(fingerprint),
-          );
-        },
-      );
+      return _buildClient(socket, host);
     } catch (_) {
       unawaited(socket?.close() ?? Future<void>.value());
       rethrow;
     }
+  }
+
+  Future<SSHClient> _connectViaJump(SavedHost host, SavedHost jump) async {
+    // Agent forwarding applies to the target only, never to the jump.
+    final jumpClient = await _connectDirect(jump.copyWith(forwardAgent: false));
+    try {
+      final channel = await jumpClient
+          .forwardLocal(host.host.trim(), host.port)
+          .timeout(Duration(seconds: host.connectionTimeoutSeconds));
+      final client = _buildClient(channel, host);
+      unawaited(
+        client.done
+            .then((_) {}, onError: (_) {})
+            .whenComplete(jumpClient.close),
+      );
+      return client;
+    } catch (_) {
+      jumpClient.close();
+      rethrow;
+    }
+  }
+
+  SSHClient _buildClient(SSHSocket socket, SavedHost host) {
+    final identities = _identitiesFor(host);
+    return _clientBuilder(
+      socket,
+      username: host.username.trim(),
+      identities: identities,
+      agentHandler: _agentHandlerFor(host, identities),
+      onPasswordRequest: _passwordRequestFor(host),
+      onUserInfoRequest: _userInfoRequestFor(host),
+      onVerifyHostKey: (type, fingerprint) {
+        return _hostKeyVerifier.verify(
+          host: host.host.trim(),
+          port: host.port,
+          type: type,
+          fingerprint: _formatFingerprint(fingerprint),
+        );
+      },
+    );
   }
 
   List<SSHKeyPair>? _identitiesFor(SavedHost host) {

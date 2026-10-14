@@ -9,6 +9,7 @@ import 'package:conduit/features/app_lock/presentation/app_lock_controller.dart'
 import 'package:conduit/features/app_lock/presentation/lock_page.dart';
 import 'package:conduit/features/backup/data/app_backup_service.dart';
 import 'package:conduit/features/hosts/data/secure_saved_hosts_repository.dart';
+import 'package:conduit/features/hosts/domain/saved_host.dart';
 import 'package:conduit/features/hosts/presentation/hosts_controller.dart';
 import 'package:conduit/features/hosts/presentation/hosts_page.dart';
 import 'package:conduit/features/local_shell/data/local_terminal_repository.dart';
@@ -51,9 +52,21 @@ void main() {
     secureStorage,
     promptCoordinator,
   );
+  SavedHost? resolveJumpHost(String id) {
+    for (final host in hostsController.hosts) {
+      if (host.id == id) {
+        return host;
+      }
+    }
+    return null;
+  }
+
   final localShellController = LocalShellController();
   final terminalRepository = RoutingTerminalRepository(
-    ssh: DartSshTerminalRepository(hostKeyVerifier),
+    ssh: DartSshTerminalRepository(
+      hostKeyVerifier,
+      jumpHostResolver: resolveJumpHost,
+    ),
     mosh: MoshTerminalRepository(hostKeyVerifier),
     local: LocalTerminalRepository(
       resolveLaunch: localShellController.requireLaunch,
@@ -63,7 +76,10 @@ void main() {
     terminalRepository,
     ConnectivityPlusNetwork(),
   );
-  final sftpRepository = DartSshSftpRepository(hostKeyVerifier);
+  final sftpRepository = DartSshSftpRepository(
+    hostKeyVerifier,
+    jumpHostResolver: resolveJumpHost,
+  );
   final backupService = AppBackupService(
     hostsController: hostsController,
     themeController: themeController,
