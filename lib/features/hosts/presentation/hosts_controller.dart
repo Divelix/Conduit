@@ -1,4 +1,5 @@
 import 'package:conduit/core/app_failure.dart';
+import 'package:conduit/features/hosts/domain/jump_host_rules.dart';
 import 'package:conduit/features/hosts/domain/saved_host.dart';
 import 'package:conduit/features/hosts/domain/saved_hosts_repository.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,7 @@ class HostsController extends ChangeNotifier {
   List<String> _manualOrder = const [];
   bool _isLoading = true;
   String? _errorMessage;
+  String? _deleteBlockedMessage;
 
   List<SavedHost> get hosts => _hosts;
   List<SavedHost> get sortedHosts =>
@@ -23,6 +25,10 @@ class HostsController extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+
+  /// Set when [remove] refused because other hosts jump through the host.
+  /// Kept apart from [errorMessage] so the host list stays on screen.
+  String? get deleteBlockedMessage => _deleteBlockedMessage;
 
   Future<void> load() async {
     _isLoading = true;
@@ -150,6 +156,16 @@ class HostsController extends ChangeNotifier {
   }
 
   Future<void> remove(SavedHost host) async {
+    final dependents = dependentsOf(host, _hosts);
+    if (dependents.isNotEmpty) {
+      final names = dependents.map((dependent) => dependent.name).join(', ');
+      _deleteBlockedMessage =
+          '“${host.name}” is the jump host for $names. '
+          'Change or clear their jump host first.';
+      notifyListeners();
+      return;
+    }
+    _deleteBlockedMessage = null;
     await _save(
       _hosts.where((currentHost) => currentHost.id != host.id).toList(),
     );

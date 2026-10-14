@@ -65,6 +65,11 @@ class HardwareKeyEntry {
   }
 }
 
+String? _parseJumpHostId(Map<String, Object?> json) {
+  final raw = json['jumpHostId'];
+  return raw is String && raw.isNotEmpty ? raw : null;
+}
+
 List<HardwareKeyEntry> _parseHardwareKeys(Map<String, Object?> json) {
   final entries = (json['hardwareKeys'] as List? ?? const [])
       .map(HardwareKeyEntry.fromJson)
@@ -150,6 +155,7 @@ class SavedHost {
     this.connectSnippetId = '',
     this.lastConnectedAt,
     this.isLocal = false,
+    this.jumpHostId,
   });
 
   factory SavedHost.localShell({required String id, required String name}) {
@@ -190,6 +196,9 @@ class SavedHost {
   final String connectSnippetId;
   final DateTime? lastConnectedAt;
   final bool isLocal;
+
+  /// Id of another saved host to reach this one through (ProxyJump).
+  final String? jumpHostId;
 
   bool get isValid =>
       id.isNotEmpty &&
@@ -264,6 +273,8 @@ class SavedHost {
     DateTime? lastConnectedAt,
     bool clearLastConnectedAt = false,
     bool? isLocal,
+    String? jumpHostId,
+    bool clearJumpHostId = false,
   }) {
     return SavedHost(
       id: id ?? this.id,
@@ -296,6 +307,7 @@ class SavedHost {
           ? null
           : lastConnectedAt ?? this.lastConnectedAt,
       isLocal: isLocal ?? this.isLocal,
+      jumpHostId: clearJumpHostId ? null : jumpHostId ?? this.jumpHostId,
     );
   }
 
@@ -334,6 +346,7 @@ class SavedHost {
       'connectSnippetId': connectSnippetId,
       'lastConnectedAt': lastConnectedAt?.toIso8601String(),
       'isLocal': isLocal,
+      'jumpHostId': jumpHostId,
     };
   }
 
@@ -390,6 +403,7 @@ class SavedHost {
           ? null
           : DateTime.tryParse(lastConnectedAtRaw),
       isLocal: json['isLocal'] as bool? ?? false,
+      jumpHostId: _parseJumpHostId(json),
     );
   }
 }

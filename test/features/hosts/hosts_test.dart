@@ -170,6 +170,7 @@ void main() {
         ],
         connectSnippetId: 'snippet:deploy',
         lastConnectedAt: DateTime.parse('2025-01-02T03:04:05Z'),
+        jumpHostId: 'bastion',
       );
 
       final decoded = SavedHost.fromJson(original.toJson());
@@ -199,6 +200,33 @@ void main() {
       expect(decoded.snippets, original.snippets);
       expect(decoded.connectSnippetId, original.connectSnippetId);
       expect(decoded.lastConnectedAt, original.lastConnectedAt);
+      expect(decoded.jumpHostId, 'bastion');
+    });
+
+    test('jumpHostId defaults to null when absent or empty', () {
+      const base = {
+        'id': 'id',
+        'name': 'Host',
+        'host': 'example.com',
+        'port': 22,
+        'username': 'root',
+        'authMethod': 'password',
+        'password': 'secret',
+      };
+
+      expect(SavedHost.fromJson(base).jumpHostId, isNull);
+      expect(
+        SavedHost.fromJson({...base, 'jumpHostId': ''}).jumpHostId,
+        isNull,
+      );
+    });
+
+    test('copyWith sets and clears jumpHostId', () {
+      final host = buildHost('a').copyWith(jumpHostId: 'b');
+
+      expect(host.jumpHostId, 'b');
+      expect(host.copyWith(username: 'x').jumpHostId, 'b');
+      expect(host.copyWith(clearJumpHostId: true).jumpHostId, isNull);
     });
 
     test('invalid persisted mosh ports fall back to the default', () {

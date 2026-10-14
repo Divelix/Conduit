@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:conduit/core/theme/app_palette.dart';
 import 'package:conduit/core/theme/terminal_appearance.dart';
@@ -86,6 +87,40 @@ void main() {
         ]);
       },
     );
+
+    test('round-trips jumpHostId and loads old backups without it', () async {
+      final source = await _Fixture.create(empty: true);
+      source.hostsRepository.persisted = [
+        buildHost('bastion'),
+        buildHost('target').copyWith(jumpHostId: 'bastion'),
+      ];
+      await source.hostsController.load();
+      final bytes = await source.service.exportBackup(includeSecrets: false);
+
+      final target = await _Fixture.create(empty: true);
+      await target.service.importBackup(bytes);
+      final imported = {
+        for (final host in target.hostsRepository.persisted) host.id: host,
+      };
+      expect(imported['target']!.jumpHostId, 'bastion');
+      expect(imported['bastion']!.jumpHostId, isNull);
+
+      final legacy = await _Fixture.create();
+      final legacyBytes = await legacy.service.exportBackup(
+        includeSecrets: false,
+      );
+      final decoded =
+          jsonDecode(utf8.decode(legacyBytes)) as Map<String, Object?>;
+      final payload = decoded['payload'] as Map<String, Object?>;
+      for (final host in payload['hosts'] as List<Object?>) {
+        (host as Map<String, Object?>).remove('jumpHostId');
+      }
+      final fresh = await _Fixture.create(empty: true);
+      await fresh.service.importBackup(
+        Uint8List.fromList(utf8.encode(jsonEncode(decoded))),
+      );
+      expect(fresh.hostsRepository.persisted.single.jumpHostId, isNull);
+    });
 
     test(
       'imports by merging matching hosts and keeping unrelated hosts',

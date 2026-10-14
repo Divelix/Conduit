@@ -652,6 +652,12 @@ class _HostsPageState extends State<HostsPage> {
     );
     if (shouldDelete ?? false) {
       await widget.hostsController.remove(host);
+      final blocked = widget.hostsController.deleteBlockedMessage;
+      if (blocked != null && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(blocked)));
+      }
     }
   }
 }
